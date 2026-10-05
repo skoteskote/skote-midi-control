@@ -1,0 +1,44 @@
+{
+    "name": "Skote.Midi",
+    "rootNamespace": "Skote.Midi",
+    "references": [
+        "Minis",
+        "Unity.InputSystem",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Skote.Vfx",
+        "Skote.Vfx.Sdf",
+        "Skote.TemporalBlur",
+        "Skote.MetavidoExtensions"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.skote.vfx-toolkit",
+            "expression": "",
+            "define": "SKOTE_VFX_TOOLKIT"
+        },
+        {
+            "name": "com.unity.demoteam.mesh-to-sdf",
+            "expression": "",
+            "define": "SKOTE_MESH_TO_SDF"
+        },
+        {
+            "name": "com.skote.dynamic-temporal-blur",
+            "expression": "",
+            "define": "SKOTE_DYNAMIC_TEMPORAL_BLUR"
+        },
+        {
+            "name": "com.skote.metavido-extensions",
+            "expression": "",
+            "define": "SKOTE_METAVIDO_EXTENSIONS"
+        }
+    ],
+    "noEngineReferences": false
+}
