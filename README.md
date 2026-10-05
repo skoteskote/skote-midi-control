@@ -8,14 +8,23 @@ Namespace: `Skote.Midi`
 
 | Component | |
 |---|---|
-| `MidiMappingManager` + **Window > MIDI Mapping** | Live click-to-map of notes/CCs to targets, with envelopes; mappings are saved in the scene |
-| `GenericMidiRouter` | Inspector-configured CC/note/envelope bindings for any device |
-| `MidiInputRouter` | Fixed layout for a Korg nanoKONTROL2 |
-| `MidiSequencer` | Records CC pad hits and loops them |
+| `MidiMappingManager` + **Window > MIDI Mapping** | Click an incoming note/CC, click a target, done. CCs map continuously to a min/max range, notes trigger envelopes (base → peak → decay), and both can fire actions. Mappings can be bound to one device or to any device, and are saved in the scene |
+| `MidiSequencer` | Records CC pad hits and loops them back through the mapping manager |
 | `MidiInputLogger` | Logs incoming MIDI |
 | `Rotator`, `CameraZController`, `AnimatorSpeedController` | Simple MIDI-controllable targets |
 
-Built-in targets: `VisualEffect`, `VideoPlayer`, URP `Volume` overrides, and the components above.
+Targets are defined in the manager's inspector (object + target type + property/action name). Built-in target types:
+
+| Type | Kind | Property / action |
+|---|---|---|
+| `VFXFloat` | value | exposed float on a `VisualEffect` |
+| `VFXEvent` | trigger | event name |
+| `VideoSpeed` | value | `VideoPlayer` playback speed |
+| `PostProcessing` | value | URP `Volume`: `exposure`, `contrast`, `saturation`, `hueshift`, `bloomintensity`, `bloomthreshold`, `bloomscatter`, `vignetteintensity`, `vignettesmoothness`, `chromaticaberration`, `motionblur`, `filmgrain`, `temperature`, `tint`, `focusdistance`, `aperture`, `lensdistortion` |
+| `RotatorSpeed`, `CameraZ`, `AnimatorSpeed` | value | |
+| `AnimatorPause` | trigger | toggles `AnimatorSpeedController` pause |
+
+Trigger targets fire on note-on, or on the press (rising edge) of a CC button.
 
 ### Optional integrations
 
@@ -23,10 +32,10 @@ These targets switch on automatically when the matching package is installed:
 
 | Package | Adds targets |
 |---|---|
-| `com.skote.vfx-toolkit` | `VFXManager`, `VFXVector2Controller` |
-| `com.skote.vfx-toolkit` + mesh-to-sdf | `AnimatorManager` (speed, triggers, SDF group switching) |
-| `com.skote.dynamic-temporal-blur` | `DynamicTemporalBlur` opacity |
-| `com.skote.metavido-extensions` | `MetavidoManager` actions + `MetavidoManagerMidiBinder` |
+| `com.skote.vfx-toolkit` | `VFXManager` (value), `VFXManagerAction` (trigger: group action like `KillA`/`ReviveB`, or toggles a bool), `VFXVector2` (value) |
+| `com.skote.vfx-toolkit` + mesh-to-sdf | `AnimatorManagerSpeed` (value), `AnimatorManagerAction` (trigger: `Next<Group>`/`Prev<Group>` SDF switch, animator trigger, or empty to toggle pause) |
+| `com.skote.dynamic-temporal-blur` | `TemporalBlurOpacity` (value) |
+| `com.skote.metavido-extensions` | `MetavidoAction` (trigger: `play`, `next`, `prev`, `random`, `stop`) and the standalone `MetavidoManagerMidiBinder` |
 
 ## Install
 

@@ -5,7 +5,7 @@ namespace Skote.Midi
     /// <summary>
     /// Controls the playback speed of an Animator.
     /// Attach to a GameObject with an Animator component, then reference this
-    /// component from MidiInputRouter to control animation speed via MIDI.
+    /// component from MidiMappingManager to control animation speed via MIDI.
     /// </summary>
     [RequireComponent(typeof(Animator))]
     public class AnimatorSpeedController : MonoBehaviour

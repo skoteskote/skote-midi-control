@@ -73,6 +73,8 @@ namespace Skote.Midi
 
         // Envelope state per mapping
         private Dictionary<LiveMapping, float> _envelopeValues = new Dictionary<LiveMapping, float>();
+        // Last CC value per trigger mapping, for rising-edge detection
+        private Dictionary<LiveMapping, float> _lastCCValues = new Dictionary<LiveMapping, float>();
 
         private HashSet<MidiDevice> _subscribedDevices = new HashSet<MidiDevice>();
         private float _lastEditorTime;
@@ -175,7 +177,7 @@ namespace Skote.Midi
             // Process envelope decay for Note mappings with envelope enabled
             // CC mappings are continuous and don't use envelopes
             var mappingsToUpdate = activeMappings
-                .Where(m => m.midiType == MidiInputType.Note && m.useEnvelope)
+                .Where(m => m.midiType == MidiInputType.Note && m.useEnvelope && m.target != null && !IsTrigger(m.target.targetType))
                 .ToList();
 
             foreach (var mapping in mappingsToUpdate)
@@ -255,11 +257,15 @@ namespace Skote.Midi
             foreach (var mapping in activeMappings.Where(m =>
                 m.midiType == MidiInputType.Note &&
                 m.inputNumber == noteNum &&
-                m.deviceName == deviceName))
+                MatchesDevice(m.deviceName, deviceName)))
             {
                 if (mapping.target == null) continue;
 
-                if (mapping.useEnvelope)
+                if (IsTrigger(mapping.target.targetType))
+                {
+                    TriggerEvent(mapping.target);
+                }
+                else if (mapping.useEnvelope)
                 {
                     // Trigger envelope
                     float peak = mapping.velocityScalesPeak
@@ -326,13 +332,49 @@ namespace Skote.Midi
             foreach (var mapping in activeMappings.Where(m =>
                 m.midiType == MidiInputType.CC &&
                 m.inputNumber == ccNum &&
-                m.deviceName == deviceName))
+                MatchesDevice(m.deviceName, deviceName)))
             {
                 if (mapping.target == null) continue;
+
+                if (IsTrigger(mapping.target.targetType))
+                {
+                    // CC buttons send 1 on press and 0 on release: fire on the rising edge only
+                    _lastCCValues.TryGetValue(mapping, out float previous);
+                    _lastCCValues[mapping] = value;
+                    if (value >= 0.5f && previous < 0.5f)
+                        TriggerEvent(mapping.target);
+                    continue;
+                }
 
                 // CCs are continuous - apply value directly (with optional remap)
                 float mappedValue = Mathf.Lerp(mapping.baseValue, mapping.peakValue, value);
                 ApplyValue(mapping.target, mappedValue);
+            }
+        }
+
+        /// <summary>
+        /// A mapping with an empty device name listens to every device.
+        /// </summary>
+        public static bool MatchesDevice(string mappingDevice, string deviceName)
+        {
+            return string.IsNullOrEmpty(mappingDevice) || mappingDevice == deviceName;
+        }
+
+        /// <summary>
+        /// Trigger targets fire an action instead of receiving a continuous value.
+        /// </summary>
+        public static bool IsTrigger(MidiTargetType type)
+        {
+            switch (type)
+            {
+                case MidiTargetType.VFXEvent:
+                case MidiTargetType.VFXManagerAction:
+                case MidiTargetType.AnimatorManagerAction:
+                case MidiTargetType.AnimatorPause:
+                case MidiTargetType.MetavidoAction:
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -368,8 +410,8 @@ namespace Skote.Midi
         public LiveMapping CreateMapping(MidiInputType midiType, string deviceName, int inputNumber, MidiTarget target)
         {
             // For CC, default to no envelope (continuous control)
-            // For Notes, default to envelope (trigger with decay)
-            bool useEnvelope = midiType == MidiInputType.Note;
+            // For Notes, default to envelope (trigger with decay), except for trigger targets
+            bool useEnvelope = midiType == MidiInputType.Note && !IsTrigger(target.targetType);
 
             var mapping = new LiveMapping
             {
@@ -403,6 +445,7 @@ namespace Skote.Midi
         {
             activeMappings.Remove(mapping);
             _envelopeValues.Remove(mapping);
+            _lastCCValues.Remove(mapping);
 
             // Auto-save
             SaveMappings();
@@ -424,6 +467,7 @@ namespace Skote.Midi
         {
             activeMappings.Clear();
             _envelopeValues.Clear();
+            _lastCCValues.Clear();
             savedMappings.Clear();
             MarkDirty();
             OnMappingsChanged?.Invoke();
@@ -472,6 +516,7 @@ namespace Skote.Midi
 
             activeMappings.Clear();
             _envelopeValues.Clear();
+            _lastCCValues.Clear();
 
             // Make sure targets are discovered first
             if (availableTargets.Count == 0)
@@ -492,7 +537,7 @@ namespace Skote.Midi
                 var mapping = new LiveMapping
                 {
                     midiType = saved.midiType,
-                    deviceName = saved.deviceName ?? "Unknown",
+                    deviceName = saved.deviceName ?? "",
                     inputNumber = saved.inputNumber,
                     target = target,
                     useEnvelope = saved.useEnvelope,
@@ -612,6 +657,16 @@ namespace Skote.Midi
                 case MidiTargetType.VFXManager:
                     ((VFXManager)target.component).SetProperty(target.propertyName, value);
                     break;
+
+                case MidiTargetType.VFXVector2:
+                    ((VFXVector2Controller)target.component).SetProperty(target.propertyName, value);
+                    break;
+#endif
+
+#if SKOTE_DYNAMIC_TEMPORAL_BLUR
+                case MidiTargetType.TemporalBlurOpacity:
+                    ((DynamicTemporalBlur)target.component).SetDefaultOpacity(value);
+                    break;
 #endif
             }
         }
@@ -625,26 +680,62 @@ namespace Skote.Midi
                 case MidiTargetType.VFXEvent:
                     ((VisualEffect)target.component).SendEvent(target.propertyName);
                     break;
+
+                case MidiTargetType.AnimatorPause:
+                    ((AnimatorSpeedController)target.component).TogglePause();
+                    break;
+
+#if SKOTE_VFX_TOOLKIT
+                case MidiTargetType.VFXManagerAction:
+                    // A group action (e.g. "KillA", "ReviveB"), otherwise a bool property to toggle
+                    var vfxManager = (VFXManager)target.component;
+                    if (!string.IsNullOrEmpty(target.propertyName) && !vfxManager.ProcessGroupAction(target.propertyName))
+                        vfxManager.ToggleBool(target.propertyName);
+                    break;
+#endif
+
+#if SKOTE_VFX_TOOLKIT && SKOTE_MESH_TO_SDF
+                case MidiTargetType.AnimatorManagerAction:
+                    // An SDF action ("Next<Group>"/"Prev<Group>"), otherwise an animator trigger; empty toggles pause
+                    var animManager = (AnimatorManager)target.component;
+                    if (string.IsNullOrEmpty(target.propertyName))
+                        animManager.TogglePause();
+                    else if (!animManager.ProcessSDFAction(target.propertyName))
+                        animManager.SendTrigger(target.propertyName);
+                    break;
+#endif
+
+#if SKOTE_METAVIDO_EXTENSIONS
+                case MidiTargetType.MetavidoAction:
+                    var metavido = (MetavidoManager)target.component;
+                    switch (target.propertyName?.ToLower())
+                    {
+                        case "play": metavido.Play(); break;
+                        case "next": metavido.NextClip(); break;
+                        case "previous":
+                        case "prev": metavido.PreviousClip(); break;
+                        case "random": metavido.RandomClip(); break;
+                        case "stop": metavido.Stop(); break;
+                        default:
+                            Debug.LogWarning($"[MidiMapping] Unknown MetavidoManager action: {target.propertyName}");
+                            break;
+                    }
+                    break;
+#endif
             }
         }
 
         private void ApplyPostProcessing(Volume volume, string property, float value)
         {
-            if (volume?.profile == null) return;
+            if (volume?.profile == null || string.IsNullOrEmpty(property)) return;
 
             switch (property.ToLower())
             {
-                case "bloomintensity":
-                    if (volume.profile.TryGet<Bloom>(out var bloom))
-                        bloom.intensity.Override(value);
-                    break;
-                case "bloomthreshold":
-                    if (volume.profile.TryGet<Bloom>(out var bloom2))
-                        bloom2.threshold.Override(value);
-                    break;
+                // ColorAdjustments
+                case "postexposure":
                 case "exposure":
-                    if (volume.profile.TryGet<ColorAdjustments>(out var ca))
-                        ca.postExposure.Override(value);
+                    if (volume.profile.TryGet<ColorAdjustments>(out var ca1))
+                        ca1.postExposure.Override(value);
                     break;
                 case "contrast":
                     if (volume.profile.TryGet<ColorAdjustments>(out var ca2))
@@ -654,21 +745,77 @@ namespace Skote.Midi
                     if (volume.profile.TryGet<ColorAdjustments>(out var ca3))
                         ca3.saturation.Override(value);
                     break;
+                case "hueshift":
+                    if (volume.profile.TryGet<ColorAdjustments>(out var ca4))
+                        ca4.hueShift.Override(value);
+                    break;
+
+                // Bloom
+                case "bloomintensity":
+                    if (volume.profile.TryGet<Bloom>(out var bloom1))
+                        bloom1.intensity.Override(value);
+                    break;
+                case "bloomthreshold":
+                    if (volume.profile.TryGet<Bloom>(out var bloom2))
+                        bloom2.threshold.Override(value);
+                    break;
+                case "bloomscatter":
+                    if (volume.profile.TryGet<Bloom>(out var bloom3))
+                        bloom3.scatter.Override(value);
+                    break;
+
+                // Vignette
                 case "vignetteintensity":
-                    if (volume.profile.TryGet<Vignette>(out var vig))
-                        vig.intensity.Override(value);
+                    if (volume.profile.TryGet<Vignette>(out var vig1))
+                        vig1.intensity.Override(value);
                     break;
+                case "vignettesmoothness":
+                    if (volume.profile.TryGet<Vignette>(out var vig2))
+                        vig2.smoothness.Override(value);
+                    break;
+
                 case "chromaticaberration":
-                    if (volume.profile.TryGet<ChromaticAberration>(out var chr))
-                        chr.intensity.Override(value);
-                    break;
-                case "filmgrain":
-                    if (volume.profile.TryGet<FilmGrain>(out var fg))
-                        fg.intensity.Override(value);
+                case "chromatic":
+                    if (volume.profile.TryGet<ChromaticAberration>(out var chroma))
+                        chroma.intensity.Override(value);
                     break;
                 case "motionblur":
                     if (volume.profile.TryGet<MotionBlur>(out var mb))
                         mb.intensity.Override(value);
+                    break;
+                case "filmgrain":
+                case "grain":
+                    if (volume.profile.TryGet<FilmGrain>(out var fg))
+                        fg.intensity.Override(value);
+                    break;
+
+                // WhiteBalance
+                case "temperature":
+                    if (volume.profile.TryGet<WhiteBalance>(out var wb1))
+                        wb1.temperature.Override(value);
+                    break;
+                case "tint":
+                    if (volume.profile.TryGet<WhiteBalance>(out var wb2))
+                        wb2.tint.Override(value);
+                    break;
+
+                // DepthOfField
+                case "focusdistance":
+                    if (volume.profile.TryGet<DepthOfField>(out var dof1))
+                        dof1.focusDistance.Override(value);
+                    break;
+                case "aperture":
+                    if (volume.profile.TryGet<DepthOfField>(out var dof2))
+                        dof2.aperture.Override(value);
+                    break;
+
+                case "lensdistortion":
+                    if (volume.profile.TryGet<LensDistortion>(out var ld))
+                        ld.intensity.Override(value);
+                    break;
+
+                default:
+                    Debug.LogWarning($"[MidiMapping] Unknown Volume property: {property}");
                     break;
             }
         }
@@ -690,7 +837,14 @@ namespace Skote.Midi
         PostProcessing,
         RotatorSpeed,
         CameraZ,
-        VFXManager
+        VFXManager,
+        // Appended to keep serialized values of the types above stable
+        VFXVector2,
+        TemporalBlurOpacity,
+        VFXManagerAction,
+        AnimatorManagerAction,
+        AnimatorPause,
+        MetavidoAction
     }
 
     /// <summary>
@@ -709,7 +863,7 @@ namespace Skote.Midi
         [Tooltip("Which component type to control")]
         public MidiTargetType targetType;
 
-        [Tooltip("Property name (for VFX, Volume, VFXManager)")]
+        [Tooltip("Property name (VFX, Volume, VFXManager, VFXVector2), event name (VFXEvent) or action name (VFXManagerAction, AnimatorManagerAction, MetavidoAction)")]
         public string propertyName;
 
         /// <summary>
@@ -724,8 +878,10 @@ namespace Skote.Midi
                 MidiTargetType.VFXFloat => targetObject.GetComponent<VisualEffect>(),
                 MidiTargetType.VFXEvent => targetObject.GetComponent<VisualEffect>(),
                 MidiTargetType.AnimatorSpeed => targetObject.GetComponent<AnimatorSpeedController>(),
+                MidiTargetType.AnimatorPause => targetObject.GetComponent<AnimatorSpeedController>(),
 #if SKOTE_VFX_TOOLKIT && SKOTE_MESH_TO_SDF
                 MidiTargetType.AnimatorManagerSpeed => targetObject.GetComponent<AnimatorManager>(),
+                MidiTargetType.AnimatorManagerAction => targetObject.GetComponent<AnimatorManager>(),
 #endif
                 MidiTargetType.VideoSpeed => targetObject.GetComponent<VideoPlayer>(),
                 MidiTargetType.PostProcessing => targetObject.GetComponent<Volume>(),
@@ -733,6 +889,14 @@ namespace Skote.Midi
                 MidiTargetType.CameraZ => targetObject.GetComponent<CameraZController>(),
 #if SKOTE_VFX_TOOLKIT
                 MidiTargetType.VFXManager => targetObject.GetComponent<VFXManager>(),
+                MidiTargetType.VFXManagerAction => targetObject.GetComponent<VFXManager>(),
+                MidiTargetType.VFXVector2 => targetObject.GetComponent<VFXVector2Controller>(),
+#endif
+#if SKOTE_DYNAMIC_TEMPORAL_BLUR
+                MidiTargetType.TemporalBlurOpacity => targetObject.GetComponent<DynamicTemporalBlur>(),
+#endif
+#if SKOTE_METAVIDO_EXTENSIONS
+                MidiTargetType.MetavidoAction => targetObject.GetComponent<MetavidoManager>(),
 #endif
                 _ => null
             };

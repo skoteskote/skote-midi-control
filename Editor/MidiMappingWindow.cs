@@ -296,7 +296,7 @@ namespace Skote.Midi.Editor
 
             // Count mappings for this input (matching device + type + number)
             int mappingCount = manager.activeMappings.Count(m =>
-                m.midiType == midiType && m.deviceName == deviceName && m.inputNumber == inputNumber);
+                m.midiType == midiType && MidiMappingManager.MatchesDevice(m.deviceName, deviceName) && m.inputNumber == inputNumber);
             string typePrefix = midiType == MidiInputType.Note ? "N" : "CC";
             string label = mappingCount > 0 ? $"{typePrefix}{inputNumber} ({mappingCount})" : $"{typePrefix}{inputNumber}";
 
@@ -394,12 +394,18 @@ namespace Skote.Midi.Editor
                             EditorGUILayout.EndHorizontal();
 
                             // Show device name
-                            EditorGUILayout.LabelField($"Device: {mapping.deviceName ?? "Unknown"}", EditorStyles.miniLabel);
+                            EditorGUILayout.LabelField(string.IsNullOrEmpty(mapping.deviceName) ? "Device: Any" : $"Device: {mapping.deviceName}", EditorStyles.miniLabel);
 
                             // Settings row - different for Notes vs CCs
                             EditorGUI.BeginChangeCheck();
 
-                            if (mapping.midiType == MidiInputType.Note)
+                            if (mapping.target != null && MidiMappingManager.IsTrigger(mapping.target.targetType))
+                            {
+                                // Trigger targets fire on note-on / CC press; no range or envelope
+                                string action = string.IsNullOrEmpty(mapping.target.propertyName) ? mapping.target.targetType.ToString() : mapping.target.propertyName;
+                                EditorGUILayout.LabelField($"Trigger: {action}", EditorStyles.miniLabel);
+                            }
+                            else if (mapping.midiType == MidiInputType.Note)
                             {
                                 // Note: Envelope settings (trigger + decay)
                                 EditorGUILayout.BeginHorizontal();

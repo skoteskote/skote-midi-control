@@ -1,6 +1,6 @@
 {
     "name": "com.skote.midi-control",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "displayName": "Skote MIDI Control",
     "description": "MIDI control for live visuals using Keijiro's Minis: CC/note routers with envelopes, a live mapping window, a sequencer, and optional integrations with the other Skote packages.",
     "unity": "6000.1",
